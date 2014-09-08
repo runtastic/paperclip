@@ -434,8 +434,11 @@ module Paperclip
     def post_process_style(name, style) #:nodoc:
       begin
         raise RuntimeError.new("Style #{name} has no processors defined.") if style.processors.blank?
+        intermediate_files = []
         @queued_for_write[name] = style.processors.inject(@queued_for_write[:original]) do |file, processor|
-          Paperclip.processor(processor).make(file, style.processor_options, self)
+          new_file = Paperclip.processor(processor).make(file, style.processor_options, self)
+          intermediate_files << new_file
+          new_file
         end
         unadapted_file = @queued_for_write[name]
         @queued_for_write[name] = Paperclip.io_adapters.for(@queued_for_write[name])
@@ -444,6 +447,8 @@ module Paperclip
       rescue Paperclip::Error => e
         log("An error was received while processing: #{e.inspect}")
         (@errors[:processing] ||= []) << e.message if @options[:whiny]
+      ensure
+        unlink_files(intermediate_files)
       end
     end
 
@@ -484,7 +489,11 @@ module Paperclip
 
     # called by storage after the writes are flushed and before @queued_for_writes is cleared
     def after_flush_writes
-      @queued_for_write.each do |style, file|
+      unlink_files(@queued_for_write.values)
+    end
+
+    def unlink_files(files)
+      Array(files).each do |file|
         file.close unless file.closed?
         file.unlink if file.respond_to?(:unlink) && file.path.present? && File.exist?(file.path)
       end
